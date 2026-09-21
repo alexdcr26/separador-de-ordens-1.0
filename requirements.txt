@@ -1,5 +1,5 @@
 streamlit
 pypdf
-pytesseract
 PyMuPDF
 Pillow
+easyocr
