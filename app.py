@@ -1,5 +1,5 @@
 import streamlit as st
-import pytesseract
+import easyocr
 import fitz  # PyMuPDF
 from pypdf import PdfReader, PdfWriter
 import re
@@ -21,12 +21,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-title"> Separador de Ordens de Serviço</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">📄 Separador de Ordens de Serviço</div>', unsafe_allow_html=True)
 st.markdown('<div class="subtitle">Faça upload do PDF escaneado e separe automaticamente cada ordem em arquivos individuais</div>', unsafe_allow_html=True)
 
-def extrair_texto_ocr(imagem_pil):
-    """Extrai texto de uma imagem PIL usando OCR."""
-    return pytesseract.image_to_string(imagem_pil, lang='por')
+# Inicializar o leitor OCR (carrega os modelos na memória)
+@st.cache_resource
+def carregar_ocr():
+    return easyocr.Reader(['pt'], gpu=False)
+
+def extrair_texto_ocr(reader, imagem_pil):
+    """Extrai texto de uma imagem PIL usando EasyOCR."""
+    # Converter PIL para numpy array (EasyOCR precisa)
+    import numpy as np
+    img_np = np.array(imagem_pil)
+    resultados = reader.readtext(img_np, detail=0)
+    return ' '.join(resultados)
 
 def eh_nova_ordem(texto):
     match = re.search(r'Ordem\s+(\d{9})\s+Tipo', texto, re.IGNORECASE)
@@ -38,14 +47,18 @@ def eh_nova_ordem(texto):
     return None
 
 def processar_pdf(pdf_bytes, progress_bar, status_text):
-    """Processa o PDF usando PyMuPDF (sem precisar de poppler)."""
+    """Processa o PDF usando PyMuPDF + EasyOCR."""
+    # Carregar OCR
+    status_text.info("🔄 Carregando motor de OCR (pode demorar na 1ª vez)...")
+    reader = carregar_ocr()
+    
     # Abrir PDF com PyMuPDF
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     total_paginas = len(doc)
     
     ordens = OrderedDict()
     ordem_atual = None
-    imagens_pil = []  # Lista de imagens PIL para criar os PDFs depois
+    imagens_pil = []
     
     status_text.info(f"🔄 Convertendo {total_paginas} páginas em imagens...")
     
@@ -60,7 +73,8 @@ def processar_pdf(pdf_bytes, progress_bar, status_text):
         imagens_pil.append(img_pil)
         
         # OCR na página
-        texto = extrair_texto_ocr(img_pil)
+        status_text.info(f"🔍 Analisando página {i+1} de {total_paginas} com OCR...")
+        texto = extrair_texto_ocr(reader, img_pil)
         nova_ordem = eh_nova_ordem(texto)
         
         if nova_ordem:
@@ -150,7 +164,7 @@ if uploaded_file is not None:
                 )
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown("###  Ordens Encontradas")
+                st.markdown("### 📋 Ordens Encontradas")
                 
                 for num_ordem, paginas in ordens.items():
                     pdf_separado = ordens_dados[num_ordem]
@@ -174,6 +188,6 @@ if uploaded_file is not None:
                             use_container_width=True
                         )
         except Exception as e:
-            st.error(f" Erro ao processar: {str(e)}")
+            st.error(f"❌ Erro ao processar: {str(e)}")
             import traceback
             st.code(traceback.format_exc())
